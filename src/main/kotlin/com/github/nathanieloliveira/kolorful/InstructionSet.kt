@@ -224,7 +224,7 @@ enum class Register {
         }
 
         fun decodeR16(byte: UByte): Register {
-            val shifted = byte.toInt() shr 4 and 0x04
+            val shifted = byte.toInt() shr 4 and 0x03
             return Register.entries[8 + shifted]
         }
 
@@ -294,12 +294,12 @@ data class DecR8(val operand: Register): Instruction(Opcode.DEC_R8)
 data class DecR16(val operand: Register): Instruction(Opcode.DEC_R16)
 data class IncR8(val operand: Register): Instruction(Opcode.INC_R8)
 data class IncR16(val operand: Register): Instruction(Opcode.INC_R16)
-data class LdR8Hl(val source: Register): Instruction(Opcode.LD_R8_HL)
-data class LdHlR8(val destination: Register): Instruction(Opcode.LD_HL_R8)
+data class LdR8Hl(val destination: Register): Instruction(Opcode.LD_R8_HL)
+data class LdHlR8(val source: Register): Instruction(Opcode.LD_HL_R8)
 
 data class LdR8R8(val source: Register, val destination: Register): Instruction(Opcode.LD_R8_R8)
 data class LdR16A(val source: Register): Instruction(Opcode.LD_R16_A)
-data class LdAR16(val destination: Register): Instruction(Opcode.LD_A_R16)
+data class LdAR16(val source: Register): Instruction(Opcode.LD_A_R16)
 data class OrAR8(val operand: Register): Instruction(Opcode.OR_A_R8)
 data class PopR16(val operand: Register): Instruction(Opcode.POP_R16)
 data class PushR16(val operand: Register): Instruction(Opcode.PUSH_R16)
@@ -319,7 +319,7 @@ data class JrE8(val immediate: Byte): Instruction(Opcode.JR_E8)
 data class JrCcE8(val condition: Condition, val immediate: Byte): Instruction(Opcode.JR_CC_E8)
 data class LdHlN8(val immediate: UByte): Instruction(Opcode.LD_HL_N8)
 data class LdR8N8(val destination: Register, val immediate: UByte): Instruction(Opcode.LD_R8_N8)
-data class LdHlSpE8(val immediate: UByte): Instruction(Opcode.LD_HL_SP_E8)
+data class LdHlSpE8(val immediate: Byte): Instruction(Opcode.LD_HL_SP_E8)
 data class LdhN8A(val immediate: UByte): Instruction(Opcode.LDH_N8_A)
 data class LdhAN8(val immediate: UByte): Instruction(Opcode.LDH_A_N8)
 data class OrAN8(val immediate: UByte): Instruction(Opcode.OR_A_N8)

@@ -1,8 +1,10 @@
 package com.github.nathanieloliveira.kolorful
 
+@OptIn(ExperimentalStdlibApi::class)
 class Cpu(
     val bootRom: ByteArray,
     val bus: Bus,
+    val trace: Boolean = true,
 ) {
 
     companion object {
@@ -101,6 +103,40 @@ class Cpu(
         set(value) {
             af = setFlag(value, FLAG_CARRY)
         }
+
+    fun dumpState() = buildString {
+        append("A=")
+        append(a.toHexString())
+        append("    BC=")
+        append(bc.toHexString())
+        append("\n")
+        append("DE=")
+        append(de.toHexString())
+        append(" HL=")
+        append(hl.toHexString())
+        append("\n")
+        append("PC=")
+        append(pc.toHexString())
+        append(" SP=")
+        append(sp.toHexString())
+        append("\nFLAGS: ")
+        append("z=$z ")
+        append("n=$n ")
+        append("h=$half ")
+        append("c=$carry")
+        val spp = sp.toUInt()
+        if (spp != 0u) {
+            val stackSize = (0xFFFEu - spp).toInt()
+            if (stackSize > 0) {
+                append("\nStack: ")
+                for (addr in 0 until stackSize) {
+                    val hramAddr = hram.size - stackSize + addr
+                    append(hram[hramAddr].toHexString())
+                    append(" ")
+                }
+            }
+        }
+    }
 
     val cb: UByte = if (carry) 0x01u else 0x00u
 
@@ -203,21 +239,37 @@ class Cpu(
         Condition.CARRY -> carry
     }
 
+    val hram = ByteArray(0x7F)
+
     fun readByte(address: UShort): UByte {
         val inBootRange = address.toInt() < bootRom.size
-        return if (isBoot && inBootRange) {
-            bootRom[address].toUByte()
-        } else {
-            bus.read(address)
+        return when {
+            isBoot && inBootRange -> {
+                bootRom[address].toUByte()
+            }
+            address in 0xFF80u..0xFFFEu -> {
+                // in HRAM
+                hram[(address - 0xFF80u).toInt()].toUByte()
+            }
+            else -> {
+                bus.read(address)
+            }
         }
     }
 
     fun writeByte(address: UShort, byte: UByte) {
         val inBootRange = address.toInt() < bootRom.size
-        return if (isBoot && inBootRange) {
-            error("trying to write into Boot ROM address")
-        } else {
-            bus.write(address, byte)
+        when {
+            isBoot && inBootRange -> {
+                error("trying to write into Boot ROM address. address=${address.toHexString()} value=${byte.toHexString()}")
+            }
+            address in 0xFF80u..0xFFFEu -> {
+                // in HRAM
+                hram[(address - 0xFF80u).toInt()] = byte.toByte()
+            }
+            else -> {
+                bus.write(address, byte)
+            }
         }
     }
 
@@ -228,7 +280,7 @@ class Cpu(
     fun fetchUShort(): UShort {
         val leastSignificant = fetchByte()
         val mostSignificant = fetchByte()
-        val short = mostSignificant.toInt() shl 8 and leastSignificant.toInt()
+        val short = (mostSignificant.toUInt() shl 8) or (leastSignificant.toUInt())
         return short.toUShort()
     }
 
@@ -394,7 +446,7 @@ class Cpu(
             }
             Opcode.LD_HL_SP_E8 -> {
                 val immediate = fetchByte()
-                LdHlSpE8(immediate)
+                LdHlSpE8(immediate.toByte())
             }
             Opcode.LD_SP_HL -> LdSpHl
             Opcode.LD_C_A -> LdCA
@@ -453,11 +505,19 @@ class Cpu(
 
     fun execute(instruction: RealInstruction) {
         fun call(label: UShort) {
-            val least = readByte(pc)
-            val most = readByte((pc + 1u).toUShort())
-            writeByte(sp++, least)
-            writeByte(sp++, most)
+            val least = (pc and 0xFFu).toUByte()
+            val most = (pc.toUInt() and 0xFF00u shr 8).toUByte()
+            writeByte(sp--, most)
+            writeByte(sp--, least)
             pc = label
+        }
+
+        fun ret() {
+            val least = readByte((sp + 1u).toUShort())
+            val most = readByte((sp + 2u).toUShort())
+            val value = (most.toUInt() shl 8) or least.toUInt()
+            pc = value.toUShort()
+            sp = (sp + 2u).toUShort()
         }
 
         fun execute(instruction: Instruction) {
@@ -607,7 +667,7 @@ class Cpu(
                     TODO("not capable to disable interrupt")
                 }
                 Halt -> {
-                    TODO()
+                    TODO("halt")
                 }
                 IncHl -> {
                     val result = readByte(hl) + 1u
@@ -656,52 +716,210 @@ class Cpu(
                     writeByte(addr.toUShort(), a)
                 }
                 is LdAN16 -> {
-
+                    a = readByte(instruction.immediate)
                 }
-                is LdAR16 -> TODO()
-                is LdHlN8 -> TODO()
-                is LdHlR8 -> TODO()
-                is LdHlSpE8 -> TODO()
-                is LdN16A -> TODO()
-                is LdN16Sp -> TODO()
-                is LdR16A -> TODO()
-                is LdR16N16 -> TODO()
-                is LdR8Hl -> TODO()
-                is LdR8N8 -> TODO()
-                is LdR8R8 -> TODO()
-                LdSpHl -> TODO()
-                is LdSpN16 -> TODO()
-                LddAHl -> TODO()
-                LddHlA -> TODO()
-                is LdhAN8 -> TODO()
-                is LdhN8A -> TODO()
-                LdiAHl -> TODO()
-                LdiHlA -> TODO()
-                Nop -> TODO()
-                OrAHl -> TODO()
-                is OrAN8 -> TODO()
-                is OrAR8 -> TODO()
-                is PopR16 -> TODO()
-                is PushR16 -> TODO()
-                Ret -> TODO()
-                is RetCc -> TODO()
-                RetI -> TODO()
-                RlA -> TODO()
-                RlcA -> TODO()
-                RrA -> TODO()
-                RrcA -> TODO()
-                is RstVec -> TODO()
-                SbcAHl -> TODO()
-                is SbcAN8 -> TODO()
-                is SbcAR8 -> TODO()
-                Scf -> TODO()
-                Stop -> TODO()
-                SubAHl -> TODO()
-                is SubAN8 -> TODO()
-                is SubAR8 -> TODO()
-                XorAHl -> TODO()
-                is XorAN8 -> TODO()
-                is XorAR8 -> TODO()
+                is LdAR16 -> {
+                    a = readByte(readR16(instruction.source))
+                }
+                is LdHlN8 -> {
+                    writeByte(hl, instruction.immediate)
+                }
+                is LdHlR8 -> {
+                    writeByte(hl, readR8(instruction.source))
+                }
+                is LdHlSpE8 -> {
+                    val result = (sp.toInt() + instruction.immediate).toUInt()
+                    hl = result.toUShort()
+                    setFlags(result, AluOp.ADD8)
+                }
+                is LdN16A -> {
+                    writeByte(instruction.immediate, a)
+                }
+                is LdN16Sp -> {
+                    val least = (sp and 0xFFu).toUByte()
+                    val most = (sp.toUInt() and 0xFF00u shr 8).toUByte()
+                    writeByte(instruction.immediate, least)
+                    writeByte((instruction.immediate + 1u).toUShort(), most)
+                }
+                is LdR16A -> {
+                    writeByte(readR16(instruction.source), a)
+                }
+                is LdR16N16 -> {
+                    writeR16(instruction.destination, instruction.immediate)
+                }
+                is LdR8Hl -> {
+                    writeR8(instruction.destination, readByte(hl))
+                }
+                is LdR8N8 -> {
+                    writeR8(instruction.destination, instruction.immediate)
+                }
+                is LdR8R8 -> {
+                    writeR8(instruction.destination, readR8(instruction.source))
+                }
+                LdSpHl -> {
+                    writeR16(Register.SP, hl)
+                }
+                is LdSpN16 -> {
+                    writeR16(Register.SP, instruction.immediate)
+                }
+                LddAHl -> {
+                    a = readByte(hl)
+                    hl = (hl - 1u).toUShort()
+                }
+                LddHlA -> {
+                    writeByte(hl, a)
+                    hl = (hl - 1u).toUShort()
+                }
+                is LdhAN8 -> {
+                    val addr = (0xFF00u + instruction.immediate).toUShort()
+                    a = readByte(addr)
+                }
+                is LdhN8A -> {
+                    val addr = (0xFF00u + instruction.immediate).toUShort()
+                    writeByte(addr, a)
+                }
+                LdiAHl -> {
+                    a = readByte(hl)
+                    hl = (hl + 1u).toUShort()
+                }
+                LdiHlA -> {
+                    writeByte(hl, a)
+                    hl = (hl + 1u).toUShort()
+                }
+                Nop -> {}
+                OrAHl -> {
+                    a = readByte(hl) or a
+                }
+                is OrAN8 -> {
+                    a = a or instruction.immediate
+                }
+                is OrAR8 -> {
+                    a = a or readR8(instruction.operand)
+                }
+                is PopR16 -> {
+                    val least = readByte(sp)
+                    val most = readByte((sp + 1u).toUShort())
+                    val value = (most.toUInt() shl 8) and least.toUInt()
+                    writeR16(instruction.operand, value.toUShort())
+                    sp = (sp + 2u).toUShort()
+                }
+                is PushR16 -> {
+                    val value = readR16(instruction.operand)
+                    val most = value.toUInt() and 0xFF00u shr 8
+                    val least = value.toUInt() and 0xFFu
+                    writeByte(sp, least.toUByte())
+                    writeByte((sp - 1u).toUShort(), most.toUByte())
+                    sp = (sp - 2u).toUShort()
+                }
+                Ret -> {
+                    ret()
+                }
+                is RetCc -> {
+                    val ret = checkCondition(instruction.condition)
+                    if (ret) {
+                        ret()
+                    }
+                }
+                RetI -> {
+                    ret()
+                    // todo enable interrupts
+                }
+                RlA -> {
+                    val temp = cb
+                    carry = (a and 0x80u).toUInt() == 0x80u
+                    a = (a.toUInt() shl 1).toUByte() or temp
+                    z = false
+                    n = false
+                    half = false
+                }
+                RlcA -> {
+                    carry = (a and 0x80u).toUInt() == 0x80u
+                    a = (a.toUInt() shl 1).toUByte() or cb
+                    z = false
+                    n = false
+                    half = false
+                }
+                RrA -> {
+                    val temp = cb
+                    carry = (a and 0x01u).toUInt() == 0x01u
+                    a = (a.toUInt() shr 1).toUByte() or (temp.toUInt() shl 7).toUByte()
+                    z = false
+                    n = false
+                    half = false
+                }
+                RrcA -> {
+                    carry = (a and 0x01u).toUInt() == 0x01u
+                    a = (a.toUInt() shr 1).toUByte() or (cb.toUInt() shl 7).toUByte()
+                    z = false
+                    n = false
+                    half = false
+                }
+                is RstVec -> {
+                    val addr = 0x0000u and instruction.target.toUInt()
+                    call(addr.toUShort())
+                }
+                SbcAHl -> {
+                    val result = (a - readByte(hl) - cb)
+                    a = result.toUByte()
+                    setFlags(result, AluOp.SUB8)
+                }
+                is SbcAN8 -> {
+                    val result = (a - instruction.immediate - cb)
+                    a = result.toUByte()
+                    setFlags(result, AluOp.SUB8)
+                }
+                is SbcAR8 -> {
+                    val result = (a - readR8(instruction.operand) - cb)
+                    a = result.toUByte()
+                    setFlags(result, AluOp.SUB8)
+                }
+                Scf -> {
+                    n = false
+                    half = false
+                    carry = true
+                }
+                Stop -> {
+                    // TODO WHAT?
+                }
+                SubAHl -> {
+                    val result = a - readByte(hl)
+                    a = result.toUByte()
+                    setFlags(result, AluOp.SUB8)
+                }
+                is SubAN8 -> {
+                    val result = a - instruction.immediate
+                    a = result.toUByte()
+                    setFlags(result, AluOp.SUB8)
+                }
+                is SubAR8 -> {
+                    val result = a - readR8(instruction.operand)
+                    a = result.toUByte()
+                    setFlags(result, AluOp.SUB8)
+                }
+                XorAHl -> {
+                    val result = a xor readByte(hl)
+                    a = result
+                    z = result <= 0u
+                    n = false
+                    half = false
+                    carry = false
+                }
+                is XorAN8 -> {
+                    val result = a xor instruction.immediate
+                    a = result
+                    z = result <= 0u
+                    n = false
+                    half = false
+                    carry = false
+                }
+                is XorAR8 -> {
+                    val result = a xor readR8(instruction.operand)
+                    a = result
+                    z = result <= 0u
+                    n = false
+                    half = false
+                    carry = false
+                }
             }
         }
 
@@ -732,9 +950,18 @@ class Cpu(
             }
         }
 
+        if (trace) {
+            println("execute(): inst=$instruction. Before:")
+            println(dumpState())
+        }
         when (instruction) {
             is Normal -> execute(instruction.instruction)
             is Prefixed -> execute(instruction.instruction)
+        }
+        if (trace) {
+            println("After:")
+            println(dumpState())
+            println("###################")
         }
     }
 
