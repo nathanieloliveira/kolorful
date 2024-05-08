@@ -28,6 +28,7 @@ class BankedMemory(val ran: ClosedRange<Int>) : Device {
         if (address.toUInt() in 0xC000u..0xCFFFu) {
             val readAddr = address - 0xC000u
             bank0[readAddr.toInt()] = value.toByte()
+            return
         }
         val readAddr = address - 0xD000u
         banks[selectedBank][readAddr.toInt()] = value.toByte()

@@ -143,7 +143,10 @@ class Cpu(
     var isBoot = true
 
     fun setFlags(result: UInt, aluOp: AluOp) {
-        z = result == 0u
+        z = when (aluOp) {
+            AluOp.ADD8, AluOp.SUB8 -> result and 0xFFu == 0u
+            AluOp.ADD16, AluOp.SUB16, -> result and 0xFFFFu == 0u
+        }
         n = aluOp == AluOp.SUB8 || aluOp == AluOp.SUB16
         if (aluOp == AluOp.ADD8 || aluOp == AluOp.SUB8) {
             carry = result > 0xFFu
@@ -923,30 +926,186 @@ class Cpu(
             }
         }
 
-        fun execute(prefixedInstruction: PrefixedInstruction) {
-            when (prefixedInstruction) {
-                is BitU3Hl -> TODO()
-                is BitU3R8 -> TODO()
-                is ResU3Hl -> TODO()
-                is ResU3R8 -> TODO()
-                RlHl -> TODO()
-                is RlR8 -> TODO()
-                RlcHl -> TODO()
-                is RlcR8 -> TODO()
-                RrHl -> TODO()
-                is RrR8 -> TODO()
-                RrcHl -> TODO()
-                is RrcR8 -> TODO()
-                is SetU3Hl -> TODO()
-                is SetU3R8 -> TODO()
-                SlaHl -> TODO()
-                is SlaR8 -> TODO()
-                SraHl -> TODO()
-                is SraR8 -> TODO()
-                SrlHl -> TODO()
-                is SrlR8 -> TODO()
-                SwapHl -> TODO()
-                is SwapR8 -> TODO()
+        fun execute(instruction: PrefixedInstruction) {
+            when (instruction) {
+                is BitU3Hl -> {
+                    val mask = (0x01u shl instruction.bit.toInt()).toUByte()
+                    z = readByte(hl) and mask == mask
+                    n = false
+                    half = false
+                }
+                is BitU3R8 -> {
+                    val mask = (0x01u shl instruction.bit.toInt()).toUByte()
+                    z = readR8(instruction.operand) and mask == mask
+                    n = false
+                    half = false
+                }
+                is ResU3Hl -> {
+                    val mask = (0x01u shl instruction.bit.toInt()).toUByte()
+                    val v = readByte(hl)
+                    val new = v and mask.inv()
+                    writeByte(hl, new)
+                }
+                is ResU3R8 -> {
+                    val mask = (0x01u shl instruction.bit.toInt()).toUByte()
+                    val v = readR8(instruction.operand)
+                    val new = v and mask.inv()
+                    writeR8(instruction.operand, new)
+                }
+                RlHl -> {
+                    val temp = cb
+                    val value = readByte(hl)
+                    val newValue = ((value.toUInt() shl 1) or temp.toUInt()).toUByte()
+                    writeByte(hl, newValue)
+                    carry = (value and 0x80u).toUInt() == 0x80u
+                    z = newValue.toUInt() == 0u
+                }
+                is RlR8 -> {
+                    val temp = cb
+                    val value = readR8(instruction.operand)
+                    val newValue = ((value.toUInt() shl 1) or temp.toUInt()).toUByte()
+                    writeR8(instruction.operand, newValue)
+                    carry = (value and 0x80u).toUInt() == 0x80u
+                    z = newValue.toUInt() == 0u
+                }
+                RlcHl -> {
+                    val value = readByte(hl)
+                    val b7 = ((value and 0x80u).toUInt() shr 7).toUByte()
+                    val newValue = ((value.toUInt() shl 1) or b7.toUInt()).toUByte()
+                    writeByte(hl, newValue)
+                    carry = (value and 0x80u).toUInt() == 0x80u
+                    z = newValue.toUInt() == 0u
+                    n = false
+                    half = false
+                }
+                is RlcR8 -> {
+                    val value = readR8(instruction.operand)
+                    val b7 = ((value and 0x80u).toUInt() shr 7).toUByte()
+                    val newValue = ((value.toUInt() shl 1) or b7.toUInt()).toUByte()
+                    writeR8(instruction.operand, newValue)
+                    carry = (value and 0x80u).toUInt() == 0x80u
+                    z = newValue.toUInt() == 0u
+                    n = false
+                    half = false
+                }
+                RrHl -> {
+                    val temp = cb.toUInt() shl 7
+                    val value = readByte(hl)
+                    val newValue = ((value.toUInt() shr 1) or temp).toUByte()
+                    writeByte(hl, newValue)
+                    carry = (value and 0x01u).toUInt() == 0x01u
+                    z = newValue.toUInt() == 0u
+                }
+                is RrR8 -> {
+                    val temp = cb.toUInt() shl 7
+                    val value = readR8(instruction.operand)
+                    val newValue = ((value.toUInt() shr 1) or temp).toUByte()
+                    writeR8(instruction.operand, newValue)
+                    carry = (value and 0x01u).toUInt() == 0x01u
+                    z = newValue.toUInt() == 0u
+                }
+                RrcHl -> {
+                    val value = readByte(hl)
+                    val b0 = (value and 0x01u).toUInt()
+                    val newValue = ((value.toUInt() shr 1) or b0).toUByte()
+                    writeByte(hl, newValue)
+                    carry = (value and 0x01u).toUInt() == 0x01u
+                    z = newValue.toUInt() == 0u
+                    n = false
+                    half = false
+                }
+                is RrcR8 -> {
+                    val value = readR8(instruction.operand)
+                    val b0 = (value and 0x01u).toUInt()
+                    val newValue = ((value.toUInt() shr 1) or b0).toUByte()
+                    writeR8(instruction.operand, newValue)
+                    carry = (value and 0x01u).toUInt() == 0x01u
+                    z = newValue.toUInt() == 0u
+                    n = false
+                    half = false
+                }
+                is SetU3Hl -> {
+                    val mask = (0x01u shl instruction.bit.toInt()).toUByte()
+                    val value = readByte(hl) or mask
+                    writeByte(hl, value)
+                }
+                is SetU3R8 -> {
+                    val mask = (0x01u shl instruction.bit.toInt()).toUByte()
+                    val value = readR8(instruction.operand) or mask
+                    writeR8(instruction.operand, value)
+                }
+                SlaHl -> {
+                    val value = readByte(hl).toUInt()
+                    val res = (value shl 1)
+                    writeByte(hl, res.toUByte())
+                    z = res == 0u
+                    n = false
+                    half = false
+                    carry = value and 0x80u == 0x80u
+                }
+                is SlaR8 -> {
+                    val value = readR8(instruction.operand).toUInt()
+                    val res = (value shl 1)
+                    writeR8(instruction.operand, res.toUByte())
+                    z = res == 0u
+                    n = false
+                    half = false
+                    carry = value and 0x80u == 0x80u
+                }
+                SraHl -> {
+                    val value = readByte(hl).toUInt()
+                    val res = (value shr 1) or (value and 0x80u)
+                    writeByte(hl, res.toUByte())
+                    z = res == 0u
+                    n = false
+                    half = false
+                    carry = value and 0x01u == 0x01u
+                }
+                is SraR8 -> {
+                    val value = readR8(instruction.operand).toUInt()
+                    val res = (value shr 1) or (value and 0x80u)
+                    writeR8(instruction.operand, res.toUByte())
+                    z = res == 0u
+                    n = false
+                    half = false
+                    carry = value and 0x01u == 0x01u
+                }
+                SrlHl -> {
+                    val value = readByte(hl).toUInt()
+                    val res = (value shr 1)
+                    writeByte(hl, res.toUByte())
+                    z = res == 0u
+                    n = false
+                    half = false
+                    carry = value and 0x01u == 0x01u
+                }
+                is SrlR8 -> {
+                    val value = readR8(instruction.operand).toUInt()
+                    val res = (value shr 1)
+                    writeR8(instruction.operand, res.toUByte())
+                    z = res == 0u
+                    n = false
+                    half = false
+                    carry = value and 0x01u == 0x01u
+                }
+                SwapHl -> {
+                    val value = readByte(hl).toUInt()
+                    val res = (value and 0xF0u shr 4) or (value and 0x0Fu shl 4)
+                    writeByte(hl, res.toUByte())
+                    z = res == 0u
+                    n = false
+                    half = false
+                    carry = false
+                }
+                is SwapR8 -> {
+                    val value = readR8(instruction.operand).toUInt()
+                    val res = (value and 0xF0u shr 4) or (value and 0x0Fu shl 4)
+                    writeR8(instruction.operand, res.toUByte())
+                    z = res == 0u
+                    n = false
+                    half = false
+                    carry = false
+                }
             }
         }
 

@@ -27,6 +27,7 @@ class VRam: Device {
                 "Trying to write $value into VRAM Bank Register"
             }
             selectedBank = value.toInt()
+            return
         }
         val writeAddr = address.toInt() - 0x8000
         banks[selectedBank][writeAddr] = value.toByte()
