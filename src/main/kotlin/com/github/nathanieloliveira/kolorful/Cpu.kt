@@ -12,6 +12,9 @@ class Cpu(
         const val FLAG_SUB: UShort = 0x0040u
         const val FLAG_HALF_CARRY: UShort = 0x0020u
         const val FLAG_CARRY: UShort = 0x0010u
+
+        const val HRAM_OFFSET: UShort = 0xFF80u
+        const val HRAM_END: UShort = 0xFFFEu
     }
 
     enum class AluOp {
@@ -138,7 +141,7 @@ class Cpu(
         }
     }
 
-    val cb: UByte = if (carry) 0x01u else 0x00u
+    val cb: UByte get() = if (carry) 0x01u else 0x00u
 
     var isBoot = true
 
@@ -148,11 +151,14 @@ class Cpu(
             AluOp.ADD16, AluOp.SUB16, -> result and 0xFFFFu == 0u
         }
         n = aluOp == AluOp.SUB8 || aluOp == AluOp.SUB16
-        if (aluOp == AluOp.ADD8 || aluOp == AluOp.SUB8) {
-            carry = result > 0xFFu
-            half = result > 0x0Fu || result > UShort.MAX_VALUE
+        half = when(aluOp) {
+            AluOp.ADD8, AluOp.SUB8 -> result > 0x0Fu
+            AluOp.ADD16, AluOp.SUB16 -> result > 0x7FFu
         }
-        carry = carry or (result > UShort.MAX_VALUE)
+        carry = when (aluOp) {
+            AluOp.ADD8, AluOp.SUB8 -> result > 0xFFu
+            AluOp.ADD16, AluOp.SUB16 -> result > 0xFFFFu
+        }
     }
 
     operator fun ByteArray.get(i: UShort): Byte {
@@ -250,9 +256,9 @@ class Cpu(
             isBoot && inBootRange -> {
                 bootRom[address].toUByte()
             }
-            address in 0xFF80u..0xFFFEu -> {
+            address in HRAM_OFFSET..HRAM_END -> {
                 // in HRAM
-                hram[(address - 0xFF80u).toInt()].toUByte()
+                hram[(address - HRAM_OFFSET).toInt()].toUByte()
             }
             else -> {
                 bus.read(address)
@@ -572,13 +578,13 @@ class Cpu(
                     sp = result.toUShort()
                     z = false
                     n = false
-                    carry = result > 0xFF
-                    half = result > 0x0F
+                    carry = result > 0x7F
+                    half = result > 0x07
                 }
                 AndAHl -> {
                     val result = readByte(hl) and a
                     a = result
-                    z = result.toUByte() == 0u.toUByte()
+                    z = result == 0u.toUByte()
                     n = false
                     half = true
                     carry = false
@@ -586,7 +592,7 @@ class Cpu(
                 is AndAN8 -> {
                     val result = instruction.immediate and a
                     a = result
-                    z = result.toUByte() == 0u.toUByte()
+                    z = result == 0u.toUByte()
                     n = false
                     half = true
                     carry = false
@@ -930,15 +936,15 @@ class Cpu(
             when (instruction) {
                 is BitU3Hl -> {
                     val mask = (0x01u shl instruction.bit.toInt()).toUByte()
-                    z = readByte(hl) and mask == mask
+                    z = (readByte(hl) and mask).toUInt() == 0x00u
                     n = false
-                    half = false
+                    half = true
                 }
                 is BitU3R8 -> {
                     val mask = (0x01u shl instruction.bit.toInt()).toUByte()
-                    z = readR8(instruction.operand) and mask == mask
+                    z = (readR8(instruction.operand) and mask).toUInt() == 0x00u
                     n = false
-                    half = false
+                    half = true
                 }
                 is ResU3Hl -> {
                     val mask = (0x01u shl instruction.bit.toInt()).toUByte()

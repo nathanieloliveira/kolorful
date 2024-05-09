@@ -26,7 +26,11 @@ class InstructionTest {
 
     fun createCpu() = Cpu(
         byteArrayOf(),
-        Bus(emptyArray()),
+        Bus(
+            arrayOf(
+
+            )
+        ),
         false,
     )
 
@@ -90,11 +94,12 @@ class InstructionTest {
         return this
     }
 
-    fun Cpu.checkState(state: CpuState): Cpu {
+    fun Cpu.checkState(instruction: Cpu.RealInstruction, state: CpuState): Cpu {
         val cpu = this
         var error = false
         val errorString = buildString {
-            append("\nerrors:\n")
+            append("\nError running instruction $instruction:\n")
+            append("errors:\n")
             if (state.af != null) {
                 val afError = cpu.af != state.af
                 if (afError) {
@@ -225,24 +230,228 @@ class InstructionTest {
         val instruction: Cpu.RealInstruction,
         val before: CpuState,
         val after: CpuState,
+        val setup: (Cpu.() -> Unit)? = null,
+        val extraChecks: (Cpu.() -> Unit)? = null,
     )
+
+    fun MutableList<CpuInstructionExecutionTest>.testInst(
+        instruction: Instruction,
+        before: CpuState,
+        after: CpuState,
+        setup: (Cpu.() -> Unit)? = null,
+        extraChecks: (Cpu.() -> Unit)? = null,
+    ) {
+        add(
+            CpuInstructionExecutionTest(
+                Cpu.Normal(instruction),
+                before,
+                after,
+                setup,
+                extraChecks,
+            )
+        )
+    }
+
+    fun MutableList<CpuInstructionExecutionTest>.testInst(
+        instruction: PrefixedInstruction,
+        before: CpuState,
+        after: CpuState,
+        setup: (Cpu.() -> Unit)? = null,
+        extraChecks: (Cpu.() -> Unit)? = null,
+    ) {
+        add(
+            CpuInstructionExecutionTest(
+                Cpu.Prefixed(instruction),
+                before,
+                after,
+                setup,
+                extraChecks,
+            )
+        )
+    }
 
     @Test
     fun testInstructionExecution() {
-        val tests = listOf(
-            CpuInstructionExecutionTest(
-                Cpu.Normal(AddAN8(42u)),
+        val tests = buildList {
+            // ADC tests
+            testInst(
+                AdcAR8(Register.D),
+                CpuState(a = 0u, d = 20u, carry = false),
+                CpuState(a = 20u, d = 20u, carry = false, z = false, n = false),
+            )
+            testInst(
+                AdcAR8(Register.D),
+                CpuState(a = 0u, d = 20u, carry = true),
+                CpuState(a = 21u, d = 20u, carry = false),
+            )
+            testInst(
+                AdcAR8(Register.D),
+                CpuState(a = 15u, d = 15u, carry = true, half = false),
+                CpuState(a = 31u, d = 15u, carry = false, half = true),
+            )
+            testInst(
+                AdcAR8(Register.D),
+                CpuState(a = 250u, d = 6u, carry = true, half = false),
+                CpuState(a = 1u, d = 6u, carry = true, half = true, z = false),
+            )
+            testInst(
+                AdcAR8(Register.D),
+                CpuState(a = 250u, d = 6u, carry = false, half = false),
+                CpuState(a = 0u, d = 6u, carry = true, half = true, z = true),
+            )
+            testInst(
+                AdcAHl,
+                CpuState(a = 125u, hl = Cpu.HRAM_OFFSET),
+                CpuState(a = 128u),
+                setup = {
+                    writeByte(Cpu.HRAM_OFFSET, 3u)
+                },
+            )
+            // ADD HL
+            testInst(
+                AddHlR16(Register.BC),
+                CpuState(bc = 2048u, hl = 0u, half = false),
+                CpuState(bc = 2048u, hl = 2048u, half = true),
+            )
+            testInst(
+                AddHlSp,
+                CpuState(hl = 0x7FFFu, sp = 0x8001u, half = false),
+                CpuState(hl = 0u, sp = 0x8001u, half = true, carry = true, z = true),
+            )
+            // ADD SP,e8
+            testInst(
+                AddSpE8(-128),
+                CpuState(sp = 256u, z = true, n = true, half = false, carry = false),
+                CpuState(sp = 128u, z = false, n = false, half = true, carry = true),
+            )
+            // ADD tests
+            testInst(
+                AddAN8(42u),
                 CpuState(a = 20u),
                 CpuState(a = 62u),
-            ),
-            CpuInstructionExecutionTest(
-                Cpu.Normal(AddAN8(240u)),
+            )
+            testInst(
+                AddAN8(240u),
                 CpuState(a = 16u, carry = false, z = false),
                 CpuState(a = 0u, carry = true, z = true),
-            ),
-        )
+            )
+            // AND tests
+            testInst(
+                AndAN8(0xAAu),
+                CpuState(a = 0x55u, z = false, n = true, half = false, carry = true),
+                CpuState(a = 0u, z = true, n = false, half = true, carry = false),
+            )
+            testInst(
+                AndAR8(Register.B),
+                CpuState(a = 0x55u, b = 0xAAu, z = false, n = true, half = false, carry = true),
+                CpuState(a = 0u, z = true, n = false, half = true, carry = false),
+            )
+            testInst(
+                AndAHl,
+                CpuState(a = 0x55u, hl = Cpu.HRAM_OFFSET, z = false, n = true, half = false, carry = true),
+                CpuState(a = 0u, z = true, n = false, half = true, carry = false),
+                setup = {
+                    writeByte(Cpu.HRAM_OFFSET, 0xAAu)
+                }
+            )
+            // BIT tests
+            testInst(
+                BitU3Hl(7u),
+                CpuState(hl = Cpu.HRAM_OFFSET, z = false, n = true, half = false),
+                CpuState(hl = Cpu.HRAM_OFFSET, z = false, n = false, half = true),
+                setup = {
+                    writeByte(Cpu.HRAM_OFFSET, 0xAAu)
+                }
+            )
+            testInst(
+                BitU3R8(6u, Register.A),
+                CpuState(a = 0xAAu, z = false, n = true, half = false),
+                CpuState(a = 0xAAu, z = true, n = false, half = true),
+            )
+            // CALL
+            testInst(
+                CallN16(0xFF00u),
+                CpuState(pc = 0x00FFu, sp = Cpu.HRAM_END),
+                CpuState(pc = 0xFF00u, sp = (Cpu.HRAM_END - 2u).toUShort()),
+                extraChecks = {
+                    val least = readByte((sp + 1u).toUShort())
+                    val most = readByte((sp + 2u).toUShort())
+                    assert(least.toUInt() == 0xFFu) {
+                        "least significant is wrong: expected: 0xFFu, got $least"
+                    }
+                    assert(most.toUInt() == 0x00u) {
+                        "most significant is wrong: expected: 0x00u, got $most"
+                    }
+                }
+            )
+            Condition.entries.forEachIndexed { i, cond ->
+                val stateNotCall = CpuState(pc = 0x00FFu, sp = Cpu.HRAM_END, z = cond == Condition.ZERO, carry = cond == Condition.CARRY)
+                val stateCall = CpuState(pc = 0xFF00u, sp = (Cpu.HRAM_END - 2u).toUShort())
+                // always call
+                testInst(
+                    CallCcN16(cond, 0xFF00u),
+                    stateNotCall,
+                    stateCall,
+                    extraChecks = {
+                        val least = readByte((sp + 1u).toUShort())
+                        val most = readByte((sp + 2u).toUShort())
+                        assert(least.toUInt() == 0xFFu) {
+                            "least significant is wrong: expected: 0xFFu, got $least"
+                        }
+                        assert(most.toUInt() == 0x00u) {
+                            "most significant is wrong: expected: 0x00u, got $most"
+                        }
+                    }
+                )
+                // never call
+                val notCond = Condition.entries[(i + 3) % Condition.entries.size]
+                testInst(
+                    CallCcN16(notCond, 0xFF00u),
+                    stateNotCall,
+                    stateNotCall,
+                )
+            }
+            // CCF
+            repeat(2) { i ->
+                testInst(
+                    Ccf,
+                    CpuState(n = true, half = true, carry = i == 0),
+                    CpuState(n = false, half = false, carry = i != 0),
+                )
+            }
+            // CP A,r8
+            testInst(
+                CpAR8(Register.B),
+                CpuState(a = 0xFFu, b = 0x0Fu, z = true,  n = false, half = false, carry = true),
+                CpuState(a = 0xFFu, b = 0x0Fu, z = false, n = true, half = true, carry = false),
+            )
+            testInst(
+                CpAR8(Register.B),
+                CpuState(a = 0x0Fu, b = 0xFFu, z = true,  n = false, half = false, carry = false),
+                CpuState(a = 0x0Fu, b = 0xFFu, z = false, n = true, half = true, carry = true),
+            )
+            testInst(
+                CpAN8(0xFFu),
+                CpuState(a = 0xFFu, z = false, n = false, half = false, carry = false),
+                CpuState(a = 0xFFu, z = true, n = true, half = false, carry = false),
+            )
+            // CPL
+            testInst(
+                Cpl,
+                CpuState(a = 0xFFu, z = true, n = false, half = false, carry = false),
+                CpuState(a = 0x00u, z = true, n = true, half = true, carry = false),
+            )
+        }
         for (t in tests) {
-            createCpu().setState(t.before).executeInstruction(t.instruction).checkState(t.after)
+            createCpu()
+                .setState(t.before)
+                .also {
+                    t.setup?.invoke(it)
+                }.executeInstruction(t.instruction)
+                .checkState(t.instruction, t.after)
+                .also {
+                    t.extraChecks?.invoke(it)
+                }
         }
     }
 }
