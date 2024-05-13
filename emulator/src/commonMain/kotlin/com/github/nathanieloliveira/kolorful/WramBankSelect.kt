@@ -8,9 +8,7 @@ class WramBankSelect(val bankedMemory: BankedMemory): Device {
     }
 
     override fun write(address: UShort, value: UByte) {
-        require(value.toInt() < bankedMemory.banks.size) {
-            "Tried to set an invalid WRAM Bank. $value"
-        }
-        bankedMemory.selectedBank = value.toInt()
+        val bank = (value and 0x03u).coerceAtLeast(0x01u)
+        bankedMemory.selectedBank = bank.toInt()
     }
 }

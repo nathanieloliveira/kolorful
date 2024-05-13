@@ -2,6 +2,11 @@ package com.github.nathanieloliveira.kolorful
 
 class VRam: Device {
 
+    companion object {
+        const val VRAM_START = 0x8000
+        const val VRAM_END = 0x9FFF
+    }
+
     var selectedBank = 0
 
     val banks = Array(2) {
@@ -9,7 +14,7 @@ class VRam: Device {
     }
 
     override val range: Array<ClosedRange<Int>> = arrayOf(
-        0x8000..0x9FFF,
+        VRAM_START..VRAM_END,
         0xFF4F..0xFF4F,
     )
 
@@ -23,10 +28,8 @@ class VRam: Device {
 
     override fun write(address: UShort, value: UByte) {
         if (address.toUInt() == 0xFF4Fu) {
-            require(value <= 1u) {
-                "Trying to write $value into VRAM Bank Register"
-            }
-            selectedBank = value.toInt()
+            val bank = value and 0x01u
+            selectedBank = bank.toInt()
             return
         }
         val writeAddr = address.toInt() - 0x8000

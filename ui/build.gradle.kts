@@ -10,6 +10,7 @@ kotlin {
     sourceSets {
         commonMain {
             dependencies {
+                implementation(projects.emulator)
                 implementation(compose.runtime)
                 implementation(compose.foundation)
                 implementation(compose.material)

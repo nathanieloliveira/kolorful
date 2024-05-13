@@ -307,8 +307,8 @@ class OpcodeTest {
 
         assertOpcode(0xCA, Opcode.JP_CC_N16)
         assertOpcode(0xDA, Opcode.JP_CC_N16)
-        assertOpcode(0xEA, Opcode.LD_N16_A)
-        assertOpcode(0xFA, Opcode.LD_A_N16)
+        assertOpcode(0xEA, Opcode.LD_A16_A)
+        assertOpcode(0xFA, Opcode.LD_A_A16)
 
         assertOpcode(0xCB, Opcode.PREFIX)
         assertOpcode(0xDB, Opcode.INVALID)
