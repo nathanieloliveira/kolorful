@@ -1204,18 +1204,28 @@ class Cpu(
         if (ime) {
             val isr = interruptEnable and interruptFlag
             if (isr and INTERRUPT_JOYPAD == INTERRUPT_JOYPAD) {
+                ime = false
+                interruptFlag = interruptFlag and INTERRUPT_JOYPAD.inv()
                 TODO("handle joypad interrupt")
             }
             if (isr and INTERRUPT_SERIAL == INTERRUPT_SERIAL) {
+                ime = false
+                interruptFlag = interruptFlag and INTERRUPT_SERIAL.inv()
                 TODO("handle serial interrupt")
             }
             if (isr and INTERRUPT_TIMER == INTERRUPT_TIMER) {
+                ime = false
+                interruptFlag = interruptFlag and INTERRUPT_TIMER.inv()
                 TODO("handle timer interrupt")
             }
             if (isr and INTERRUPT_LCD == INTERRUPT_LCD) {
+                ime = false
+                interruptFlag = interruptFlag and INTERRUPT_LCD.inv()
                 TODO("handle lcd interrupt")
             }
             if (isr and INTERRUPT_VBLANK == INTERRUPT_VBLANK) {
+                ime = false
+                interruptFlag = interruptFlag and INTERRUPT_VBLANK.inv()
                 TODO("handle vblank interrupt")
             }
         }
