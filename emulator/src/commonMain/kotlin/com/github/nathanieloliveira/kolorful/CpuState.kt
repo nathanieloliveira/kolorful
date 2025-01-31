@@ -19,5 +19,8 @@ data class CpuState(
     val n: Boolean,
     val half: Boolean,
     val carry: Boolean,
+    val ime: Boolean,
+    val interruptEnable: UByte,
+    val interruptFlag: UByte,
     val stack: ByteArray,
 )

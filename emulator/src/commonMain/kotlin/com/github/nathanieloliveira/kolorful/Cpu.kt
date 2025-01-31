@@ -17,6 +17,15 @@ class Cpu(
         const val HRAM_END: UShort = 0xFFFEu
 
         const val BOOT_ROM_DISABLE = 0xFF50u
+
+        const val INTERRUPT_ENABLE_ADDR = 0xFFFFu
+        const val INTERRUPT_FLAG_ADDR = 0xFF0Fu
+
+        const val INTERRUPT_JOYPAD = 0x10u
+        const val INTERRUPT_SERIAL = 0x08u
+        const val INTERRUPT_TIMER = 0x04u
+        const val INTERRUPT_LCD = 0x02u
+        const val INTERRUPT_VBLANK = 0x01u
     }
 
     enum class AluOp {
@@ -51,7 +60,10 @@ class Cpu(
     var sp: UShort = 0u
     var pc: UShort = 0u
 
+    /** Interrupt Master Enable */
     var ime: Boolean = false
+    var interruptEnable: UInt = 0u
+    var interruptFlag: UInt = 0u
 
     var a: UByte
         get() = (af.toInt() shr 8 and 0xFF).toUByte()
@@ -119,39 +131,6 @@ class Cpu(
             af = setFlag(value, FLAG_CARRY)
         }
 
-    fun dumpState() = buildString {
-        append("A=")
-        append(a.toHexString())
-        append("    BC=")
-        append(bc.toHexString())
-        append("\n")
-        append("DE=")
-        append(de.toHexString())
-        append(" HL=")
-        append(hl.toHexString())
-        append("\n")
-        append("PC=")
-        append(pc.toHexString())
-        append(" SP=")
-        append(sp.toHexString())
-        append("\nFLAGS: ")
-        append("z=$z ")
-        append("n=$n ")
-        append("h=$half ")
-        append("c=$carry")
-        val spp = sp.toUInt()
-        if (spp != 0u) {
-            val stackSize = (0xFFFEu - spp).toInt()
-            if (stackSize > 0) {
-                append("\nStack: ")
-                for (addr in 0 until stackSize) {
-                    val hramAddr = hram.size - stackSize + addr
-                    append(hram[hramAddr].toHexString())
-                    append(" ")
-                }
-            }
-        }
-    }
 
     val cb: UByte get() = if (carry) 0x01u else 0x00u
 
@@ -173,106 +152,6 @@ class Cpu(
         }
     }
 
-    operator fun ByteArray.get(i: UShort): Byte {
-        return this[i.toInt()]
-    }
-
-    fun readR8(register: Register): UByte {
-        return when (register) {
-            Register.B -> b
-            Register.C -> c
-            Register.D -> d
-            Register.E -> e
-            Register.H -> h
-            Register.L -> l
-            Register.HL_ADDR -> h
-            Register.A -> a
-            else -> error("not a valid r8 register. register: $register")
-        }
-    }
-
-    fun readR16(register: Register): UShort {
-        return when (register) {
-            Register.BC -> bc
-            Register.DE -> de
-            Register.HL -> hl
-            Register.SP -> sp
-            Register.PC -> pc
-            else -> error("not a valid r16 register. register: $register")
-        }
-    }
-
-    fun writeR8(register: Register, value: UByte) {
-        when (register) {
-            Register.B -> {
-                b = value
-            }
-
-            Register.C -> {
-                c = value
-            }
-
-            Register.D -> {
-                d = value
-            }
-
-            Register.E -> {
-                e = value
-            }
-
-            Register.H -> {
-                h = value
-            }
-
-            Register.L -> {
-                l = value
-            }
-
-            Register.HL_ADDR -> {
-                error("not a valid r8 register. register: $register")
-            }
-
-            Register.A -> {
-                a = value
-            }
-
-            else -> error("not a valid r8 register. register: $register")
-        }
-    }
-
-    fun writeR16(register: Register, value: UShort) {
-        when (register) {
-            Register.BC -> {
-                bc = value
-            }
-
-            Register.DE -> {
-                de = value
-            }
-
-            Register.HL -> {
-                hl = value
-            }
-
-            Register.SP -> {
-                sp = value
-            }
-
-            Register.PC -> {
-                pc = value
-            }
-
-            else -> error("not a valid r16 register. register: $register")
-        }
-    }
-
-    fun checkCondition(condition: Condition) = when (condition) {
-        Condition.NOT_ZERO -> !z
-        Condition.ZERO -> z
-        Condition.NOT_CARRY -> !carry
-        Condition.CARRY -> carry
-    }
-
     val hram = ByteArray(0x7F)
 
     fun readByte(address: UShort): UByte {
@@ -285,6 +164,14 @@ class Cpu(
             address in HRAM_OFFSET..HRAM_END -> {
                 // in HRAM
                 hram[(address - HRAM_OFFSET).toInt()].toUByte()
+            }
+
+            address.toUInt() == INTERRUPT_FLAG_ADDR -> {
+                interruptFlag.toUByte()
+            }
+
+            address.toUInt() == INTERRUPT_ENABLE_ADDR -> {
+                interruptEnable.toUByte()
             }
 
             else -> {
@@ -310,6 +197,14 @@ class Cpu(
                 if (!isBoot) {
                     TODO("switch to cartridge")
                 }
+            }
+
+            address.toUInt() == INTERRUPT_FLAG_ADDR -> {
+                interruptFlag = byte.toUInt()
+            }
+
+            address.toUInt() == INTERRUPT_ENABLE_ADDR -> {
+                interruptEnable = byte.toUInt()
             }
 
             else -> {
@@ -761,11 +656,12 @@ class Cpu(
                 }
 
                 Di -> {
-                    TODO("not capable to disable interrupt")
+                    ime = false
                 }
 
                 Ei -> {
-                    TODO("not capable to disable interrupt")
+                    ime = true
+                    // TODO: delay enabling by one instruction
                 }
 
                 Halt -> {
@@ -961,8 +857,8 @@ class Cpu(
                 }
 
                 RetI -> {
+                    ime = true
                     ret()
-                    // todo enable interrupts
                 }
 
                 RlA -> {
@@ -1300,12 +1196,30 @@ class Cpu(
 
     fun run() {
         while (true) {
-            val instruction = fetch(::fetchByte)!!
-            execute(instruction)
+            tick()
         }
     }
 
     fun tick() {
+        if (ime) {
+            val isr = interruptEnable and interruptFlag
+            if (isr and INTERRUPT_JOYPAD == INTERRUPT_JOYPAD) {
+                TODO("handle joypad interrupt")
+            }
+            if (isr and INTERRUPT_SERIAL == INTERRUPT_SERIAL) {
+                TODO("handle serial interrupt")
+            }
+            if (isr and INTERRUPT_TIMER == INTERRUPT_TIMER) {
+                TODO("handle timer interrupt")
+            }
+            if (isr and INTERRUPT_LCD == INTERRUPT_LCD) {
+                TODO("handle lcd interrupt")
+            }
+            if (isr and INTERRUPT_VBLANK == INTERRUPT_VBLANK) {
+                TODO("handle vblank interrupt")
+            }
+        }
+
         val instruction = fetch(::fetchByte)!!
         execute(instruction)
     }
@@ -1333,6 +1247,106 @@ class Cpu(
         af or flag
     } else {
         af and flag.inv()
+    }
+
+    operator fun ByteArray.get(i: UShort): Byte {
+        return this[i.toInt()]
+    }
+
+    fun readR8(register: Register): UByte {
+        return when (register) {
+            Register.B -> b
+            Register.C -> c
+            Register.D -> d
+            Register.E -> e
+            Register.H -> h
+            Register.L -> l
+            Register.HL_ADDR -> h
+            Register.A -> a
+            else -> error("not a valid r8 register. register: $register")
+        }
+    }
+
+    fun readR16(register: Register): UShort {
+        return when (register) {
+            Register.BC -> bc
+            Register.DE -> de
+            Register.HL -> hl
+            Register.SP -> sp
+            Register.PC -> pc
+            else -> error("not a valid r16 register. register: $register")
+        }
+    }
+
+    fun writeR8(register: Register, value: UByte) {
+        when (register) {
+            Register.B -> {
+                b = value
+            }
+
+            Register.C -> {
+                c = value
+            }
+
+            Register.D -> {
+                d = value
+            }
+
+            Register.E -> {
+                e = value
+            }
+
+            Register.H -> {
+                h = value
+            }
+
+            Register.L -> {
+                l = value
+            }
+
+            Register.HL_ADDR -> {
+                error("not a valid r8 register. register: $register")
+            }
+
+            Register.A -> {
+                a = value
+            }
+
+            else -> error("not a valid r8 register. register: $register")
+        }
+    }
+
+    fun writeR16(register: Register, value: UShort) {
+        when (register) {
+            Register.BC -> {
+                bc = value
+            }
+
+            Register.DE -> {
+                de = value
+            }
+
+            Register.HL -> {
+                hl = value
+            }
+
+            Register.SP -> {
+                sp = value
+            }
+
+            Register.PC -> {
+                pc = value
+            }
+
+            else -> error("not a valid r16 register. register: $register")
+        }
+    }
+
+    fun checkCondition(condition: Condition) = when (condition) {
+        Condition.NOT_ZERO -> !z
+        Condition.ZERO -> z
+        Condition.NOT_CARRY -> !carry
+        Condition.CARRY -> carry
     }
 
     fun getStack(): ByteArray {
@@ -1376,6 +1390,9 @@ class Cpu(
             n = n,
             half = half,
             carry = carry,
+            ime = ime,
+            interruptEnable = interruptEnable.toUByte(),
+            interruptFlag = interruptFlag.toUByte(),
             stack = getStack(),
         )
     }
@@ -1396,6 +1413,43 @@ class Cpu(
             return instructions
         } else {
             TODO("disassemble cartridge")
+        }
+    }
+
+    fun dumpState() = buildString {
+        append("A=")
+        append(a.toHexString())
+        append("    BC=")
+        append(bc.toHexString())
+        append("\n")
+        append("DE=")
+        append(de.toHexString())
+        append(" HL=")
+        append(hl.toHexString())
+        append("\n")
+        append("PC=")
+        append(pc.toHexString())
+        append(" SP=")
+        append(sp.toHexString())
+        append("\nFLAGS: ")
+        append("z=$z ")
+        append("n=$n ")
+        append("h=$half ")
+        append("c=$carry")
+        append("ime:$ime")
+        append("ie:$interruptEnable")
+        append("if:$interruptFlag")
+        val spp = sp.toUInt()
+        if (spp != 0u) {
+            val stackSize = (0xFFFEu - spp).toInt()
+            if (stackSize > 0) {
+                append("\nStack: ")
+                for (addr in 0 until stackSize) {
+                    val hramAddr = hram.size - stackSize + addr
+                    append(hram[hramAddr].toHexString())
+                    append(" ")
+                }
+            }
         }
     }
 }

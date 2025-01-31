@@ -198,6 +198,11 @@ fun CpuStateView(
             FlagState("HALF", state.half, lastState.half != state.half)
             FlagState("CARRY", state.carry, lastState.carry != state.carry)
         }
+        Section("Interrupts") {
+            FlagState("IME", state.ime, lastState.ime)
+            HexState("IE", state.interruptEnable.toHex(), Color.White)
+            HexState("IF", state.interruptEnable.toHex(), Color.White)
+        }
         Section(
             "Stack"
         ) {
