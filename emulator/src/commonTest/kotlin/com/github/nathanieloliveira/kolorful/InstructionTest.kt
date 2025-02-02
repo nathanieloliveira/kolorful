@@ -25,13 +25,13 @@ class InstructionTest {
     )
 
     fun createCpu() = Cpu(
-        byteArrayOf(),
-        Bus(
+        bootRom = byteArrayOf(),
+        bus = Bus(
             arrayOf(
 
             )
         ),
-        false,
+        trace = false,
     )
 
     fun Cpu.executeInstruction(instruction: Cpu.RealInstruction): Cpu {
@@ -440,6 +440,11 @@ class InstructionTest {
                 Cpl,
                 CpuStateNull(a = 0xFFu, z = true, n = false, half = false, carry = false),
                 CpuStateNull(a = 0x00u, z = true, n = true, half = true, carry = false),
+            )
+            testInst(
+                PushR16(Register.BC),
+                CpuStateNull(sp = 0xFFFEu, bc = 0xDEADu),
+                CpuStateNull(sp = 0xFFFCu, bc = 0xDEADu),
             )
         }
         for (t in tests) {

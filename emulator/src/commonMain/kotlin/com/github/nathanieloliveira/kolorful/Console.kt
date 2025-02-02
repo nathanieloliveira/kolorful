@@ -2,18 +2,26 @@ package com.github.nathanieloliveira.kolorful
 
 class Console(
     val trace: Boolean = false,
+    val cartridge: Cartridge?
 ) {
 
     val bankedMemory = BankedMemory(0xC000..0xDFFF)
-    val devices: Array<Device> = arrayOf(
-        VRam(),
-        bankedMemory,
-        WramBankSelect(bankedMemory),
-        AudioController(),
-        DebugDevice(arrayOf(0x0000..0xFFFF)),
-    )
+
+    val devices = buildList<Device> {
+        if (cartridge != null) {
+            add(cartridge)
+        }
+        add(VRam())
+        add(bankedMemory)
+        add(WramBankSelect(bankedMemory))
+        add(Memory(arrayOf(0xE000..0xFDFF), bankedMemory.bank0)) // Echo RAM
+        add(AudioController())
+        add(Serial())
+        add(DebugDevice(arrayOf(0x0000..0xFFFF)))
+    }.toTypedArray()
+
     val bus = Bus(devices)
-    val cpu = Cpu(this::class.java.getResourceAsStream("/cgb_boot.bin")!!.readAllBytes()!!, bus, trace)
+    val cpu = Cpu(bus, trace, this::class.java.getResourceAsStream("/cgb_boot.bin")!!.readAllBytes()!!)
 
     fun run(program: ByteArray) {
         try {

@@ -6,6 +6,9 @@ kotlin {
     jvm()
 
     sourceSets {
+        commonMain.dependencies {
+            implementation(libs.kotlinx.coroutines)
+        }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
         }

@@ -1,10 +1,14 @@
 package com.github.nathanieloliveira.kolorful
 
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
+import kotlin.math.min
+
 @OptIn(ExperimentalStdlibApi::class)
 class Cpu(
-    val bootRom: ByteArray,
     val bus: Bus,
     val trace: Boolean = true,
+    var bootRom: ByteArray? = null,
 ) {
 
     companion object {
@@ -26,6 +30,17 @@ class Cpu(
         const val INTERRUPT_TIMER = 0x04u
         const val INTERRUPT_LCD = 0x02u
         const val INTERRUPT_VBLANK = 0x01u
+
+        val allowedRstAddresses = setOf(
+            0x0000u,
+            0x0008u,
+            0x0010u,
+            0x0018u,
+            0x0020u,
+            0x0028u,
+            0x0030u,
+            0x0038u,
+        )
     }
 
     enum class AluOp {
@@ -136,6 +151,24 @@ class Cpu(
 
     var isBoot = true
 
+    val breakpoints = MutableStateFlow<Set<UShort>>(emptySet())
+
+    fun addBreakpoint(addr: UShort) {
+        breakpoints.update {
+            val new = it.toMutableSet()
+            new.add(addr)
+            new
+        }
+    }
+
+    fun removeBreakpoint(addr: UShort) {
+        breakpoints.update {
+            val new = it.toMutableSet()
+            new.remove(addr)
+            new
+        }
+    }
+
     fun setFlags(result: UInt, aluOp: AluOp) {
         z = when (aluOp) {
             AluOp.ADD8, AluOp.SUB8 -> result and 0xFFu == 0u
@@ -155,12 +188,8 @@ class Cpu(
     val hram = ByteArray(0x7F)
 
     fun readByte(address: UShort): UByte {
-        val inBootRange = address.toInt() < bootRom.size
+        val bankZeroRange = address.toInt() < 0x3FFF
         return when {
-            isBoot && inBootRange -> {
-                bootRom[address].toUByte()
-            }
-
             address in HRAM_OFFSET..HRAM_END -> {
                 // in HRAM
                 hram[(address - HRAM_OFFSET).toInt()].toUByte()
@@ -174,6 +203,10 @@ class Cpu(
                 interruptEnable.toUByte()
             }
 
+            isBoot && bankZeroRange -> {
+                bootRom!![address].toUByte()
+            }
+
             else -> {
                 bus.read(address)
             }
@@ -181,30 +214,30 @@ class Cpu(
     }
 
     fun writeByte(address: UShort, byte: UByte) {
-        val inBootRange = address.toInt() < bootRom.size
+        val bankZeroRange = address.toInt() < 0x3FFF
         when {
-            isBoot && inBootRange -> {
-                error("trying to write into Boot ROM address. address=${address.toHexString()} value=${byte.toHexString()}")
-            }
-
             address in HRAM_OFFSET..HRAM_END -> {
                 // in HRAM
                 hram[(address - HRAM_OFFSET).toInt()] = byte.toByte()
             }
 
             address.toUInt() == BOOT_ROM_DISABLE -> {
+                println("DISABLE BOOT ROM")
                 isBoot = byte <= 0x00u
-                if (!isBoot) {
-                    TODO("switch to cartridge")
-                }
             }
 
             address.toUInt() == INTERRUPT_FLAG_ADDR -> {
                 interruptFlag = byte.toUInt()
+                println("write IF=$byte")
             }
 
             address.toUInt() == INTERRUPT_ENABLE_ADDR -> {
                 interruptEnable = byte.toUInt()
+                println("write IE=$byte")
+            }
+
+            isBoot && bankZeroRange -> {
+                error("trying to write into Boot ROM address. address=${address.toHexString()} value=${byte.toHexString()}")
             }
 
             else -> {
@@ -474,21 +507,26 @@ class Cpu(
         return inst
     }
 
+    private fun call(label: UShort) {
+        val nextInst = pc
+        val least = (nextInst and 0xFFu).toUByte()
+        val most = (nextInst.toUInt() and 0xFF00u shr 8).toUByte()
+        sp = (sp - 1u).toUShort()
+        writeByte(sp, most)
+        sp = (sp - 1u).toUShort()
+        writeByte(sp, least)
+        pc = label
+    }
+
     fun execute(instruction: RealInstruction) {
-        fun call(label: UShort) {
-            val least = (pc and 0xFFu).toUByte()
-            val most = (pc.toUInt() and 0xFF00u shr 8).toUByte()
-            writeByte(sp--, most)
-            writeByte(sp--, least)
-            pc = label
-        }
 
         fun ret() {
-            val least = readByte((sp + 1u).toUShort())
-            val most = readByte((sp + 2u).toUShort())
+            val least = readByte(sp)
+            sp = (sp + 1u).toUShort()
+            val most = readByte(sp)
+            sp = (sp + 1u).toUShort()
             val value = (most.toUInt() shl 8) or least.toUInt()
             pc = value.toUShort()
-            sp = (sp + 2u).toUShort()
         }
 
         fun execute(instruction: Instruction) {
@@ -830,19 +868,21 @@ class Cpu(
 
                 is PopR16 -> {
                     val least = readByte(sp)
-                    val most = readByte((sp + 1u).toUShort())
-                    val value = (most.toUInt() shl 8) and least.toUInt()
+                    sp = (sp + 1u).toUShort()
+                    val most = readByte(sp)
+                    sp = (sp + 1u).toUShort()
+                    val value = (most.toUInt() shl 8) or least.toUInt()
                     writeR16(instruction.operand, value.toUShort())
-                    sp = (sp + 2u).toUShort()
                 }
 
                 is PushR16 -> {
                     val value = readR16(instruction.operand)
                     val most = value.toUInt() and 0xFF00u shr 8
                     val least = value.toUInt() and 0xFFu
+                    sp = (sp - 1u).toUShort()
+                    writeByte(sp, most.toUByte())
+                    sp = (sp - 1u).toUShort()
                     writeByte(sp, least.toUByte())
-                    writeByte((sp - 1u).toUShort(), most.toUByte())
-                    sp = (sp - 2u).toUShort()
                 }
 
                 Ret -> {
@@ -896,7 +936,8 @@ class Cpu(
                 }
 
                 is RstVec -> {
-                    val addr = 0x0000u and instruction.target.toUInt()
+                    val addr = instruction.target.toUInt()
+                    assert(addr in allowedRstAddresses) { "tried to jump to forbidden rst addr: addr=$addr" }
                     call(addr.toUShort())
                 }
 
@@ -1200,33 +1241,38 @@ class Cpu(
         }
     }
 
+    var stoppedAtBreakpoint = false
+
     fun tick() {
         if (ime) {
             val isr = interruptEnable and interruptFlag
-            if (isr and INTERRUPT_JOYPAD == INTERRUPT_JOYPAD) {
-                ime = false
-                interruptFlag = interruptFlag and INTERRUPT_JOYPAD.inv()
-                TODO("handle joypad interrupt")
-            }
-            if (isr and INTERRUPT_SERIAL == INTERRUPT_SERIAL) {
-                ime = false
-                interruptFlag = interruptFlag and INTERRUPT_SERIAL.inv()
-                TODO("handle serial interrupt")
-            }
-            if (isr and INTERRUPT_TIMER == INTERRUPT_TIMER) {
-                ime = false
-                interruptFlag = interruptFlag and INTERRUPT_TIMER.inv()
-                TODO("handle timer interrupt")
-            }
-            if (isr and INTERRUPT_LCD == INTERRUPT_LCD) {
-                ime = false
-                interruptFlag = interruptFlag and INTERRUPT_LCD.inv()
-                TODO("handle lcd interrupt")
+            if (isr > 0u) {
+                TODO("check interrupt")
             }
             if (isr and INTERRUPT_VBLANK == INTERRUPT_VBLANK) {
                 ime = false
                 interruptFlag = interruptFlag and INTERRUPT_VBLANK.inv()
-                TODO("handle vblank interrupt")
+                call(0x40u)
+            }
+            if (isr and INTERRUPT_LCD == INTERRUPT_LCD) {
+                ime = false
+                interruptFlag = interruptFlag and INTERRUPT_LCD.inv()
+                call(0x48u)
+            }
+            if (isr and INTERRUPT_TIMER == INTERRUPT_TIMER) {
+                ime = false
+                interruptFlag = interruptFlag and INTERRUPT_TIMER.inv()
+                call(0x50u)
+            }
+            if (isr and INTERRUPT_SERIAL == INTERRUPT_SERIAL) {
+                ime = false
+                interruptFlag = interruptFlag and INTERRUPT_SERIAL.inv()
+                call(0x58u)
+            }
+            if (isr and INTERRUPT_JOYPAD == INTERRUPT_JOYPAD) {
+                ime = false
+                interruptFlag = interruptFlag and INTERRUPT_JOYPAD.inv()
+                call(0x60u)
             }
         }
 
@@ -1360,24 +1406,15 @@ class Cpu(
     }
 
     fun getStack(): ByteArray {
-        val spp = sp.toUInt()
-        if (spp == 0u) {
-            return byteArrayOf()
+        var spp = sp.toUInt()
+        val stack = ByteArray(32)
+        val min = min(stack.size.toUInt(), 0xFFFEu - spp)
+        var c = 0
+        for (addr in spp until (spp + min)) {
+            stack[c] = readByte(addr.toUShort()).toByte()
+            c += 1
         }
-        val stackSize = (0xFFFEu - spp).toInt()
-        if (stackSize <= 0) {
-            return byteArrayOf()
-        }
-        val stack = ByteArray(stackSize)
-        val start = hram.size - stackSize
-        val end = start + stackSize
-        hram.copyInto(
-            destination = stack,
-            destinationOffset = 0,
-            startIndex = start,
-            endIndex = end
-        )
-        return stack
+        return stack.copyOf(min.toInt())
     }
 
     fun getState(): CpuState {
@@ -1408,22 +1445,23 @@ class Cpu(
     }
 
     fun getDisassembly(): List<InstructionWithAddress> {
-        if (isBoot) {
-            var pointer = 0
-            val instructions = mutableListOf<InstructionWithAddress>()
-            while (pointer < bootRom.size) {
-                val address = pointer
-                val instr = fetch {
-                    val byte = bootRom[pointer].toUByte()
-                    pointer += 1
-                    byte
-                }
-                instructions.add(InstructionWithAddress(instr, address.toUShort()))
-            }
-            return instructions
+        val romSize = if (isBoot) {
+            bootRom!!.size
         } else {
-            TODO("disassemble cartridge")
+            32 * 1024
         }
+        var pointer = 0
+        val instructions = mutableListOf<InstructionWithAddress>()
+        while (pointer < romSize) {
+            val address = pointer
+            val instr = fetch {
+                val byte = readByte(pointer.toUShort())
+                pointer += 1
+                byte
+            }
+            instructions.add(InstructionWithAddress(instr, address.toUShort()))
+        }
+        return instructions
     }
 
     fun dumpState() = buildString {

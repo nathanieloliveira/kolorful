@@ -3,13 +3,44 @@
 package com.github.nathanieloliveira.kolorful.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.*
-import androidx.compose.runtime.*
+import androidx.compose.material.Card
+import androidx.compose.material.Checkbox
+import androidx.compose.material.MaterialTheme
+import androidx.compose.material.Slider
+import androidx.compose.material.Surface
+import androidx.compose.material.Text
+import androidx.compose.material.TextButton
+import androidx.compose.material.TextField
+import androidx.compose.material.contentColorFor
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AddCircle
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -19,17 +50,28 @@ import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import com.github.nathanieloliveira.kolorful.*
+import com.github.nathanieloliveira.kolorful.Cartridge
+import com.github.nathanieloliveira.kolorful.Console
+import com.github.nathanieloliveira.kolorful.Cpu
 import com.github.nathanieloliveira.kolorful.Cpu.InstructionWithAddress
+import com.github.nathanieloliveira.kolorful.CpuState
+import com.github.nathanieloliveira.kolorful.Register
+import com.github.nathanieloliveira.kolorful.VRam
+import com.github.nathanieloliveira.kolorful.affectedRegisters
 import kolorful.ui.generated.resources.JetBrainsMono_Regular
 import kolorful.ui.generated.resources.Res
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.Font
-import org.jetbrains.skia.*
+import org.jetbrains.skia.ColorAlphaType
+import org.jetbrains.skia.ColorType
+import org.jetbrains.skia.Data
+import org.jetbrains.skia.ImageInfo
+import org.jetbrains.skia.Pixmap
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
+import org.jetbrains.skia.Image as SkiaImage
 
 val LocalMonospaceFont = staticCompositionLocalOf<FontFamily?> { null }
 
@@ -284,7 +326,7 @@ fun TileDataDebugView(
             Data.makeFromBytes(pixels),
             width * Int.SIZE_BYTES
         )
-        Image.makeFromPixmap(pixmap).use { image ->
+        SkiaImage.makeFromPixmap(pixmap).use { image ->
             drawScope.drawIntoCanvas {
                 scale(scale, pivot = Offset.Zero) {
                     it.nativeCanvas.drawImage(image, 0f, 0f)
@@ -301,7 +343,9 @@ fun DisassemblyView(
     before: Int,
     after: Int,
     block: Int,
-    modifier: Modifier = Modifier
+    breakpoints: Set<UShort>,
+    onRowClicked: (UShort) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val currentInstruction = disassembly.indexOfFirst { it.address == currentAddress }
     val toShow = if (disassembly.isEmpty() || currentInstruction < 0) {
@@ -326,19 +370,28 @@ fun DisassemblyView(
             key = { it.address },
             contentType = { 1 },
         ) { instr ->
-            val color = if (instr.address == currentAddress) {
-                MaterialTheme.colors.secondary
-            } else {
-                Color.Unspecified
+            val color = when (instr.address) {
+                currentAddress -> MaterialTheme.colors.secondary
+                in breakpoints -> MaterialTheme.colors.error
+                else -> Color.Unspecified
             }
             val textColor = contentColorFor(color)
-            Text(
-                modifier = Modifier.fillMaxWidth().background(color),
-                text = "${instr.address.toHex()}: ${instr.instruction}",
-                color = textColor,
-                style = MaterialTheme.typography.body1,
-                fontFamily = LocalMonospaceFont.current
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (instr.address in breakpoints) {
+                    Image(Icons.Default.AddCircle, null, modifier = Modifier.size(20.dp))
+                }
+                Text(
+                    modifier = Modifier.fillMaxWidth().background(color).clickable {
+                        onRowClicked(instr.address)
+                    },
+                    text = "${instr.address.toHex()}: ${instr.instruction}",
+                    color = textColor,
+                    style = MaterialTheme.typography.body1,
+                    fontFamily = LocalMonospaceFont.current
+                )
+            }
         }
     }
 }
@@ -357,16 +410,26 @@ val debugTiles = intArrayOf(
 @Composable
 fun KolorfulApp() {
 
-    val emulator = remember { Console() }
+    val emulator = remember {
+        val cart = Cartridge(
+            Console::class.java.getResourceAsStream("/individual/01-special.gb")!!.readAllBytes()!!
+        )
+        Console(cartridge = cart).also {
+            it.cpu.isBoot = false
+        }
+    }
 
     var runningEmulator by remember { mutableStateOf(false) }
     var currentCpuState by remember { mutableStateOf(emulator.cpu.getState()) }
     var lastCpuState by remember { mutableStateOf(emulator.cpu.getState()) }
+    var cartridge by remember { mutableStateOf(false) }
 
-    val disassembly = remember { emulator.cpu.getDisassembly() }
+    val disassembly = remember(cartridge) { emulator.cpu.getDisassembly() }
 
     var stop by remember { mutableStateOf(false) }
     var delay by remember { mutableStateOf(10f) }
+    var tick by remember { mutableLongStateOf(0L) }
+    var runUntil by remember { mutableLongStateOf(0L) }
 
     var version by remember { mutableStateOf(0) }
     val tileData = remember { ByteArray(VRam.VRAM_END - VRam.VRAM_START + 1) }
@@ -382,24 +445,39 @@ fun KolorfulApp() {
     }
 
     suspend fun runCpu(maxTicks: Int) {
-        runningEmulator = true
-        for (i in 0 until maxTicks) {
-            lastCpuState = emulator.cpu.getState()
-            emulator.tick()
-            currentCpuState = emulator.cpu.getState()
-            emulator.getTileData(tileData)
-            if (stop) {
-                stop = false
-                break
-            }
-            if (maxTicks > 1 && i % 100 == 0) {
-                version += 1
-            }
+        runCatching {
+            runningEmulator = true
+            for (i in 0 until maxTicks) {
+                lastCpuState = emulator.cpu.getState()
+                emulator.tick()
+                currentCpuState = emulator.cpu.getState()
+                emulator.getTileData(tileData)
+                if (stop) {
+                    stop = false
+                    break
+                }
+                if (maxTicks > 1 && i % 100 == 0) {
+                    version += 1
+                }
 
-            delay(delay.roundToInt().milliseconds)
+                cartridge = !emulator.cpu.isBoot
+                tick += 1
+                delay(delay.roundToInt().milliseconds)
+
+                if (emulator.cpu.pc in emulator.cpu.breakpoints.value) {
+                    break
+                }
+            }
+            version += 1
+            runningEmulator = false
+        }.onFailure {
+            println("crashed on tick $tick")
+            it.printStackTrace()
+            runningEmulator = false
+
+            currentCpuState = emulator.cpu.getState()
+            println(emulator.cpu.getState())
         }
-        version += 1
-        runningEmulator = false
     }
 
     val scope = rememberCoroutineScope()
@@ -421,6 +499,7 @@ fun KolorfulApp() {
                             lastCpuState,
                         )
                         Row {
+                            Text(tick.toString())
                             TextButton({
                                 scope.launch {
                                     runCpu(1)
@@ -447,8 +526,24 @@ fun KolorfulApp() {
                                 emulator.reset()
                                 currentCpuState = emulator.cpu.getState()
                                 lastCpuState = currentCpuState
+                                tick = 0
                             }, enabled = !runningEmulator) {
                                 Text("Reset")
+                            }
+
+                            TextField(runUntil.toString(), onValueChange = {
+                                val longs = it.toLongOrNull() ?: return@TextField
+                                runUntil = longs
+                            })
+
+                            TextButton({
+                                val ticks = runUntil
+                                runUntil = 0
+                                scope.launch(Dispatchers.Default) {
+                                    runCpu(ticks.toInt())
+                                }
+                            }, enabled = !runningEmulator) {
+                                Text("Run until")
                             }
                         }
                         Row {
@@ -467,12 +562,22 @@ fun KolorfulApp() {
                         }
                     }
 
+                    val breakpoints by emulator.cpu.breakpoints.collectAsState()
+
                     DisassemblyView(
                         disassembly,
                         currentCpuState.pc,
-                        10,
-                        after = 32,
-                        block = 8,
+                        64,
+                        after = 128,
+                        block = 16,
+                        breakpoints = breakpoints,
+                        onRowClicked = { addr ->
+                            if (addr in breakpoints) {
+                                emulator.cpu.removeBreakpoint(addr)
+                            } else {
+                                emulator.cpu.addBreakpoint(addr)
+                            }
+                        },
                         modifier = Modifier.width(400.dp).fillMaxHeight()
                     )
 
